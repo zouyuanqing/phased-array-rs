@@ -27,6 +27,9 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
+# CUDA Driver API FFI
+libloading = "0.8"
+
 [profile.release]
 opt-level = 3
 lto = true

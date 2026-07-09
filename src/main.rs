@@ -16,7 +16,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use phased_array_rs::{
     array::{generate_positions, ArrayConfig},
-    beamforming::{self, apply_taper, compute_array_factor, compute_beam_cut, find_sidelobe, steering_vector, BeamConfig},
+    beamforming::{self, apply_taper, find_sidelobe, steering_vector, BeamConfig},
     gpu,
     physics::{self, beam_squint_analysis, mutual_coupling_matrix, quantize_phase, simulate_failures},
     super_res::{self, esprit_ula, generate_snapshots, music_ula},
@@ -81,9 +81,9 @@ struct SquintRequest {
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let cuda_available = gpu::cuda_available();
-    tracing::info!("PTX kernels available: {}", cuda_available);
-    tracing::info!("Running in CPU mode (Rayon {}-core parallel)", rayon::current_num_threads());
+    let cuda_available = gpu::init_cuda();
+    tracing::info!("PTX kernels embedded: {}", gpu::PTX_BYTES.len());
+    tracing::info!("CUDA: {}, Rayon threads: {}", cuda_available, rayon::current_num_threads());
 
     let state = Arc::new(AppState { cuda_available });
 
@@ -159,12 +159,27 @@ async fn compute_pattern(
     let theta: Vec<f64> = (0..n_theta).map(|i| std::f64::consts::PI * i as f64 / (n_theta - 1) as f64).collect();
     let phi: Vec<f64> = (0..n_phi).map(|i| 2.0 * std::f64::consts::PI * i as f64 / (n_phi - 1) as f64).collect();
 
-    // Compute AF
-    let pattern_db = compute_array_factor(&x, &y, &weights, &theta, &phi);
+    // Compute AF via GPU (with CPU fallback)
+    let sin_theta: Vec<f64> = theta.iter().map(|t| t.sin()).collect();
+    let cos_phi: Vec<f64> = phi.iter().map(|p| p.cos()).collect();
+    let sin_phi: Vec<f64> = phi.iter().map(|p| p.sin()).collect();
+    let w_real: Vec<f64> = weights.iter().map(|c| c.re).collect();
+    let w_imag: Vec<f64> = weights.iter().map(|c| c.im).collect();
 
-    // Beam cut
+    let flat_pattern = gpu::compute_array_factor(
+        x.as_slice().unwrap(), y.as_slice().unwrap(),
+        &w_real, &w_imag,
+        &sin_theta, &cos_phi, &sin_phi,
+    );
+    let pattern_db = ndarray::Array2::from_shape_vec((n_theta, n_phi), flat_pattern).unwrap();
+
+    // Beam cut via GPU
     let theta_cut: Vec<f64> = (-90..=90).map(|d| d as f64).collect();
-    let cut_db = compute_beam_cut(&x, &y, &weights, req.beam.phi_deg, &theta_cut);
+    let cut_db = gpu::compute_beam_cut(
+        x.as_slice().unwrap(), y.as_slice().unwrap(),
+        &w_real, &w_imag,
+        &theta_cut, req.beam.phi_deg,
+    );
 
     let beam_idx = (req.beam.theta_deg + 90.0) as usize;
     let sll = find_sidelobe(&cut_db, beam_idx);
@@ -304,7 +319,17 @@ async fn pattern_realistic(Json(req): Json<RealisticRequest>) -> Result<Json<Val
     let theta: Vec<f64> = (0..n_theta).map(|i| std::f64::consts::PI * i as f64 / (n_theta - 1) as f64).collect();
     let phi: Vec<f64> = (0..n_phi).map(|i| 2.0 * std::f64::consts::PI * i as f64 / (n_phi - 1) as f64).collect();
 
-    let pattern_db = compute_array_factor(&x, &y, &weights, &theta, &phi);
+    let sin_theta: Vec<f64> = theta.iter().map(|t| t.sin()).collect();
+    let cos_phi: Vec<f64> = phi.iter().map(|p| p.cos()).collect();
+    let sin_phi: Vec<f64> = phi.iter().map(|p| p.sin()).collect();
+    let w_real: Vec<f64> = weights.iter().map(|c| c.re).collect();
+    let w_imag: Vec<f64> = weights.iter().map(|c| c.im).collect();
+
+    let flat_pattern = gpu::compute_array_factor(
+        x.as_slice().unwrap(), y.as_slice().unwrap(),
+        &w_real, &w_imag, &sin_theta, &cos_phi, &sin_phi,
+    );
+    let pattern_db = ndarray::Array2::from_shape_vec((n_theta, n_phi), flat_pattern).unwrap();
 
     // Element pattern
     let mut pattern_2d: Vec<Vec<f64>> = (0..n_theta).map(|i| pattern_db.row(i).to_vec()).collect();
@@ -314,7 +339,10 @@ async fn pattern_realistic(Json(req): Json<RealisticRequest>) -> Result<Json<Val
     }
 
     let theta_cut: Vec<f64> = (-90..=90).map(|d| d as f64).collect();
-    let cut_db = compute_beam_cut(&x, &y, &weights, req.beam.phi_deg, &theta_cut);
+    let cut_db = gpu::compute_beam_cut(
+        x.as_slice().unwrap(), y.as_slice().unwrap(),
+        &w_real, &w_imag, &theta_cut, req.beam.phi_deg,
+    );
     let beam_idx = (req.beam.theta_deg + 90.0) as usize;
     let sll = find_sidelobe(&cut_db, beam_idx);
     let bw = 51.0 / (req.array.nx as f64 * req.array.dx);
