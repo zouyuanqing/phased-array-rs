@@ -1,0 +1,33 @@
+[package]
+name = "phased-array-rs"
+version = "0.1.0"
+edition = "2021"
+description = "GPU-accelerated phased array beamforming simulator with CUDA + Rust + TypeScript"
+
+[dependencies]
+# HTTP server
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Math
+ndarray = { version = "0.16", features = ["rayon"] }
+num-complex = "0.4"
+num-traits = "0.2"
+rand = "0.8"
+
+# CPU parallelism
+rayon = "1.10"
+
+# Utilities
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
