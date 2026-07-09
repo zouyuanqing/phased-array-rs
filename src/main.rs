@@ -171,7 +171,9 @@ async fn compute_pattern(
         &w_real, &w_imag,
         &sin_theta, &cos_phi, &sin_phi,
     );
-    let pattern_db = ndarray::Array2::from_shape_vec((n_theta, n_phi), flat_pattern).unwrap();
+    let max_db = flat_pattern.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let flat_norm: Vec<f64> = flat_pattern.iter().map(|v| v - max_db).collect();
+    let pattern_db = ndarray::Array2::from_shape_vec((n_theta, n_phi), flat_norm).unwrap();
 
     // Beam cut via GPU
     let theta_cut: Vec<f64> = (-90..=90).map(|d| d as f64).collect();
@@ -180,6 +182,8 @@ async fn compute_pattern(
         &w_real, &w_imag,
         &theta_cut, req.beam.phi_deg,
     );
+    let cut_max = cut_db.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let cut_db: Vec<f64> = cut_db.iter().map(|v| v - cut_max).collect();
 
     let beam_idx = (req.beam.theta_deg + 90.0) as usize;
     let sll = find_sidelobe(&cut_db, beam_idx);
@@ -329,7 +333,9 @@ async fn pattern_realistic(Json(req): Json<RealisticRequest>) -> Result<Json<Val
         x.as_slice().unwrap(), y.as_slice().unwrap(),
         &w_real, &w_imag, &sin_theta, &cos_phi, &sin_phi,
     );
-    let pattern_db = ndarray::Array2::from_shape_vec((n_theta, n_phi), flat_pattern).unwrap();
+    let max_db = flat_pattern.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let flat_norm: Vec<f64> = flat_pattern.iter().map(|v| v - max_db).collect();
+    let pattern_db = ndarray::Array2::from_shape_vec((n_theta, n_phi), flat_norm).unwrap();
 
     // Element pattern
     let mut pattern_2d: Vec<Vec<f64>> = (0..n_theta).map(|i| pattern_db.row(i).to_vec()).collect();
@@ -343,6 +349,8 @@ async fn pattern_realistic(Json(req): Json<RealisticRequest>) -> Result<Json<Val
         x.as_slice().unwrap(), y.as_slice().unwrap(),
         &w_real, &w_imag, &theta_cut, req.beam.phi_deg,
     );
+    let cut_max = cut_db.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let cut_db: Vec<f64> = cut_db.iter().map(|v| v - cut_max).collect();
     let beam_idx = (req.beam.theta_deg + 90.0) as usize;
     let sll = find_sidelobe(&cut_db, beam_idx);
     let bw = 51.0 / (req.array.nx as f64 * req.array.dx);
